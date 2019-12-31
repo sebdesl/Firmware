@@ -442,12 +442,6 @@ void VtolType::pusher_assist()
 		_hover_pusher_or_tilt_forward_actuation = _hover_pusher_or_tilt_forward_actuation > 0.9f ? 0.9f :
 				_hover_pusher_or_tilt_forward_actuation;
 
-		// compensate in combined thrust for tilt (increase thrust with tilt)
-		if (static_cast<vtol_type>(_params->vtol_type) == vtol_type::TILTROTOR) {
-			float thrust_new = _v_att_sp->thrust_body[2] / cosf(_hover_pusher_or_tilt_forward_actuation * M_PI_2_F);
-			_v_att_sp->thrust_body[2] = thrust_new;
-		}
-
 		// return the vehicle to level position
 		float pitch_new = 0.0f;
 
