@@ -109,7 +109,7 @@ CFLAGS = $(ARCHINCLUDES) \
 	-Wno-type-limits
 
 CXXFLAGS = $(ARCHXXINCLUDES) \
-	-std=gnu++11 \
+	-std=gnu++14 \
 	-nostdinc++ \
 	${CMAKE_CXX_FLAGS} \
 	$(FLAGS) \
@@ -119,7 +119,8 @@ CXXFLAGS = $(ARCHXXINCLUDES) \
 	-fno-rtti \
 	-nostdinc++ \
 	-Wno-double-promotion \
-	-Wno-missing-declarations
+	-Wno-missing-declarations \
+	-Wno-sized-deallocation
 
 CPPFLAGS = $(ARCHINCLUDES) $(ARCHDEFINES) $(EXTRADEFINES)
 AFLAGS = $(CFLAGS) -D__ASSEMBLY__
