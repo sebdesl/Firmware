@@ -73,7 +73,7 @@ typedef enum io_timer_channel_mode_t {
 	IOTimerChanModeSize
 } io_timer_channel_mode_t;
 
-typedef uint8_t io_timer_channel_allocation_t; /* big enough to hold MAX_TIMER_IO_CHANNELS */
+typedef uint16_t io_timer_channel_allocation_t; /* big enough to hold MAX_TIMER_IO_CHANNELS */
 
 /* array of timers dedicated to PWM in and out and capture use
  *** Note that the clock_freq is set to the source in the clock tree that
