@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2018 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2018-2020 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,9 +33,7 @@
 
 #pragma once
 
-#include <drivers/drv_gyro.h>
 #include <drivers/drv_hrt.h>
-#include <lib/cdev/CDev.hpp>
 #include <lib/conversion/rotation.h>
 #include <lib/drivers/device/integrator.h>
 #include <lib/mathlib/math/filter/LowPassFilter2pArray.hpp>
@@ -43,18 +41,18 @@
 #include <lib/mathlib/math/filter/NotchFilter.hpp>
 #include <px4_platform_common/module_params.h>
 #include <uORB/PublicationMulti.hpp>
+#include <uORB/Subscription.hpp>
+#include <uORB/topics/parameter_update.h>
 #include <uORB/topics/sensor_gyro.h>
 #include <uORB/topics/sensor_gyro_fifo.h>
 #include <uORB/topics/sensor_gyro_integrated.h>
 #include <uORB/topics/sensor_gyro_status.h>
 
-class PX4Gyroscope : public cdev::CDev, public ModuleParams
+class PX4Gyroscope : public ModuleParams
 {
 public:
 	PX4Gyroscope(uint32_t device_id, uint8_t priority = ORB_PRIO_DEFAULT, enum Rotation rotation = ROTATION_NONE);
-	~PX4Gyroscope() override;
-
-	int	ioctl(cdev::file_t *filp, int cmd, unsigned long arg) override;
+	~PX4Gyroscope() override = default;
 
 	uint32_t get_device_id() const { return _device_id; }
 
@@ -92,12 +90,15 @@ private:
 	void ConfigureNotchFilter(float notch_freq, float bandwidth);
 	void PublishStatus();
 	void ResetIntegrator();
+	void UpdateCalibration();
 	void UpdateVibrationMetrics(const matrix::Vector3f &delta_angle);
 
 	uORB::PublicationMulti<sensor_gyro_s>            _sensor_pub;
 	uORB::PublicationMulti<sensor_gyro_fifo_s>       _sensor_fifo_pub;
 	uORB::PublicationMulti<sensor_gyro_integrated_s> _sensor_integrated_pub;
 	uORB::PublicationMulti<sensor_gyro_status_s>     _sensor_status_pub;
+
+	uORB::Subscription _parameter_update_sub{ORB_ID(parameter_update)};
 
 	math::LowPassFilter2pVector3f _filter{1000, 100};
 	math::NotchFilter<matrix::Vector3f> _notch_filter{};
@@ -116,8 +117,6 @@ private:
 	matrix::Vector3f _delta_angle_prev{0.0f, 0.0f, 0.0f};	// delta angle from the previous IMU measurement
 	float _vibration_metric{0.0f};	// high frequency vibration level in the IMU delta angle data (rad)
 	float _coning_vibration{0.0f};	// Level of coning vibration in the IMU delta angles (rad^2)
-
-	int			_class_device_instance{-1};
 
 	uint32_t		_device_id{0};
 	const enum Rotation	_rotation;
@@ -141,6 +140,9 @@ private:
 	uint8_t			_integrator_samples{0};
 	uint8_t			_integrator_fifo_samples{0};
 	uint8_t			_integrator_clipping{0};
+
+	bool			_calibrated{false};
+	bool			_enabled{false};
 
 	DEFINE_PARAMETERS(
 		(ParamFloat<px4::params::IMU_GYRO_CUTOFF>) _param_imu_gyro_cutoff,

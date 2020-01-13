@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2018 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2018-2020 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,7 +40,6 @@ using namespace time_literals;
 using matrix::Vector3f;
 
 PX4Accelerometer::PX4Accelerometer(uint32_t device_id, uint8_t priority, enum Rotation rotation) :
-	CDev(nullptr),
 	ModuleParams(nullptr),
 	_sensor_pub{ORB_ID(sensor_accel), priority},
 	_sensor_fifo_pub{ORB_ID(sensor_accel_fifo), priority},
@@ -49,40 +48,11 @@ PX4Accelerometer::PX4Accelerometer(uint32_t device_id, uint8_t priority, enum Ro
 	_device_id{device_id},
 	_rotation{rotation}
 {
-	_class_device_instance = register_class_devname(ACCEL_BASE_DEVICE_PATH);
-
 	// set software low pass filter for controllers
 	updateParams();
+	UpdateCalibration();
+
 	ConfigureFilter(_param_imu_accel_cutoff.get());
-}
-
-PX4Accelerometer::~PX4Accelerometer()
-{
-	if (_class_device_instance != -1) {
-		unregister_class_devname(ACCEL_BASE_DEVICE_PATH, _class_device_instance);
-	}
-}
-
-int PX4Accelerometer::ioctl(cdev::file_t *filp, int cmd, unsigned long arg)
-{
-	switch (cmd) {
-	case ACCELIOCSSCALE: {
-			// Copy offsets and scale factors in
-			accel_calibration_s cal{};
-			memcpy(&cal, (accel_calibration_s *) arg, sizeof(cal));
-
-			_calibration_offset = Vector3f{cal.x_offset, cal.y_offset, cal.z_offset};
-			_calibration_scale = Vector3f{cal.x_scale, cal.y_scale, cal.z_scale};
-		}
-
-		return PX4_OK;
-
-	case DEVIOCGDEVICEID:
-		return _device_id;
-
-	default:
-		return -ENOTTY;
-	}
 }
 
 void PX4Accelerometer::set_device_type(uint8_t devtype)
@@ -96,6 +66,8 @@ void PX4Accelerometer::set_device_type(uint8_t devtype)
 
 	// copy back
 	_device_id = device_id.devid;
+
+	UpdateCalibration();
 }
 
 void PX4Accelerometer::set_sample_rate(uint16_t rate)
@@ -111,8 +83,85 @@ void PX4Accelerometer::set_update_rate(uint16_t rate)
 	_integrator_reset_samples = 4000 / update_interval;
 }
 
+void PX4Accelerometer::UpdateCalibration()
+{
+	for (unsigned i = 0; i < 3; ++i) {
+		char str[30] {};
+		sprintf(str, "CAL_ACC%u_ID", i);
+		int32_t device_id = 0;
+
+		if (param_get(param_find(str), &device_id) != OK) {
+			PX4_ERR("Could not access param %s", str);
+			continue;
+		}
+
+		if (device_id == 0) {
+			continue;
+		}
+
+		if ((uint32_t)device_id == _device_id) {
+			int32_t enabled = 1;
+			sprintf(str, "CAL_ACC%u_EN", i);
+			param_get(param_find(str), &enabled);
+			_enabled = (enabled == 1);
+
+			// scale factors (x, y, z)
+			float scale[3] {};
+
+			sprintf(str, "CAL_ACC%u_XSCALE", i);
+			param_get(param_find(str), &scale[0]);
+
+			sprintf(str, "CAL_ACC%u_YSCALE", i);
+			param_get(param_find(str), &scale[1]);
+
+			sprintf(str, "CAL_ACC%u_ZSCALE", i);
+			param_get(param_find(str), &scale[2]);
+
+			_calibration_scale = matrix::Vector3f{scale};
+
+
+			// offsets factors (x, y, z)
+			float offset[3] {};
+
+			sprintf(str, "CAL_ACC%u_XOFF", i);
+			param_get(param_find(str), &offset[0]);
+
+			sprintf(str, "CAL_ACC%u_YOFF", i);
+			param_get(param_find(str), &offset[1]);
+
+			sprintf(str, "CAL_ACC%u_ZOFF", i);
+			param_get(param_find(str), &offset[2]);
+
+			_calibration_offset = matrix::Vector3f{offset};
+
+			_calibrated = true;
+
+			return;
+		}
+	}
+
+	// reset if no calibration data found
+	_calibration_scale = matrix::Vector3f{1.0f, 1.0f, 1.0f};
+	_calibration_offset.zero();
+	_calibrated = false;
+	_enabled = true;
+}
+
 void PX4Accelerometer::update(hrt_abstime timestamp_sample, float x, float y, float z)
 {
+	// check for parameter updates
+	if (_parameter_update_sub.updated()) {
+		// clear update
+		parameter_update_s pupdate;
+		_parameter_update_sub.copy(&pupdate);
+
+		// update parameters from storage
+		ModuleParams::updateParams();
+		UpdateCalibration();
+
+		ConfigureFilter(_param_imu_accel_cutoff.get());
+	}
+
 	// Apply rotation (before scaling)
 	rotate_3f(_rotation, x, y, z);
 
@@ -189,6 +238,19 @@ void PX4Accelerometer::update(hrt_abstime timestamp_sample, float x, float y, fl
 
 void PX4Accelerometer::updateFIFO(const FIFOSample &sample)
 {
+	// check for parameter updates
+	if (_parameter_update_sub.updated()) {
+		// clear update
+		parameter_update_s pupdate;
+		_parameter_update_sub.copy(&pupdate);
+
+		// update parameters from storage
+		ModuleParams::updateParams();
+		UpdateCalibration();
+
+		ConfigureFilter(_param_imu_accel_cutoff.get());
+	}
+
 	// filtered data (control)
 	float x_filtered = _filterArrayX.apply(sample.x, sample.samples);
 	float y_filtered = _filterArrayY.apply(sample.y, sample.samples);
@@ -355,6 +417,8 @@ void PX4Accelerometer::PublishStatus()
 		status.clipping[0] = _clipping[0];
 		status.clipping[1] = _clipping[1];
 		status.clipping[2] = _clipping[2];
+		status.calibrated = _calibrated;
+		status.enabled = _enabled;
 		status.timestamp = hrt_absolute_time();
 		_sensor_status_pub.publish(status);
 
@@ -395,9 +459,14 @@ void PX4Accelerometer::UpdateVibrationMetrics(const Vector3f &delta_velocity)
 
 void PX4Accelerometer::print_status()
 {
-	PX4_INFO(ACCEL_BASE_DEVICE_PATH " device instance: %d", _class_device_instance);
+	char device_id_buffer[80] {};
+	device::Device::device_id_print_buffer(device_id_buffer, sizeof(device_id_buffer), _device_id);
+	PX4_INFO("device id: %d (%s)", _device_id, device_id_buffer);
+	PX4_INFO("rotation: %d", _rotation);
 	PX4_INFO("sample rate: %d Hz", _sample_rate);
 	PX4_INFO("filter cutoff: %.3f Hz", (double)_filter.get_cutoff_freq());
+	PX4_INFO("calibrated: %d", _calibrated);
+	PX4_INFO("enabled: %d", _enabled);
 
 	PX4_INFO("calibration scale: %.5f %.5f %.5f", (double)_calibration_scale(0), (double)_calibration_scale(1),
 		 (double)_calibration_scale(2));

@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2018 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2018-2020 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,7 +40,6 @@ using namespace time_literals;
 using matrix::Vector3f;
 
 PX4Gyroscope::PX4Gyroscope(uint32_t device_id, uint8_t priority, enum Rotation rotation) :
-	CDev(nullptr),
 	ModuleParams(nullptr),
 	_sensor_pub{ORB_ID(sensor_gyro), priority},
 	_sensor_fifo_pub{ORB_ID(sensor_gyro_fifo), priority},
@@ -49,40 +48,12 @@ PX4Gyroscope::PX4Gyroscope(uint32_t device_id, uint8_t priority, enum Rotation r
 	_device_id{device_id},
 	_rotation{rotation}
 {
-	_class_device_instance = register_class_devname(GYRO_BASE_DEVICE_PATH);
-
 	// set software low pass filter for controllers
 	updateParams();
+	UpdateCalibration();
+
 	ConfigureFilter(_param_imu_gyro_cutoff.get());
 	ConfigureNotchFilter(_param_imu_gyro_nf_freq.get(), _param_imu_gyro_nf_bw.get());
-}
-
-PX4Gyroscope::~PX4Gyroscope()
-{
-	if (_class_device_instance != -1) {
-		unregister_class_devname(GYRO_BASE_DEVICE_PATH, _class_device_instance);
-	}
-}
-
-int PX4Gyroscope::ioctl(cdev::file_t *filp, int cmd, unsigned long arg)
-{
-	switch (cmd) {
-	case GYROIOCSSCALE: {
-			// Copy offsets and scale factors in
-			gyro_calibration_s cal{};
-			memcpy(&cal, (gyro_calibration_s *) arg, sizeof(cal));
-
-			_calibration_offset = Vector3f{cal.x_offset, cal.y_offset, cal.z_offset};
-		}
-
-		return PX4_OK;
-
-	case DEVIOCGDEVICEID:
-		return _device_id;
-
-	default:
-		return -ENOTTY;
-	}
 }
 
 void PX4Gyroscope::set_device_type(uint8_t devtype)
@@ -96,6 +67,8 @@ void PX4Gyroscope::set_device_type(uint8_t devtype)
 
 	// copy back
 	_device_id = device_id.devid;
+
+	UpdateCalibration();
 }
 
 void PX4Gyroscope::set_sample_rate(uint16_t rate)
@@ -112,8 +85,70 @@ void PX4Gyroscope::set_update_rate(uint16_t rate)
 	_integrator_reset_samples = 4000 / update_interval;
 }
 
+void PX4Gyroscope::UpdateCalibration()
+{
+	for (unsigned i = 0; i < 3; ++i) {
+		char str[30] {};
+		sprintf(str, "CAL_GYRO%u_ID", i);
+		int32_t device_id = 0;
+
+		if (param_get(param_find(str), &device_id) != OK) {
+			PX4_ERR("Could not access param %s", str);
+			continue;
+		}
+
+		if (device_id == 0) {
+			continue;
+		}
+
+		if ((uint32_t)device_id == _device_id) {
+			int32_t enabled = 1;
+			sprintf(str, "CAL_GYRO%u_EN", i);
+			param_get(param_find(str), &enabled);
+			_enabled = (enabled == 1);
+
+			// offsets factors (x, y, z)
+			float offset[3] {};
+
+			sprintf(str, "CAL_GYRO%u_XOFF", i);
+			param_get(param_find(str), &offset[0]);
+
+			sprintf(str, "CAL_GYRO%u_YOFF", i);
+			param_get(param_find(str), &offset[1]);
+
+			sprintf(str, "CAL_GYRO%u_ZOFF", i);
+			param_get(param_find(str), &offset[2]);
+
+			_calibration_offset = matrix::Vector3f{offset};
+
+			_calibrated = true;
+
+			return;
+		}
+	}
+
+	// reset if no calibration data found
+	_calibration_offset.zero();
+	_calibrated = false;
+	_enabled = true;
+}
+
 void PX4Gyroscope::update(hrt_abstime timestamp_sample, float x, float y, float z)
 {
+	// check for parameter updates
+	if (_parameter_update_sub.updated()) {
+		// clear update
+		parameter_update_s pupdate;
+		_parameter_update_sub.copy(&pupdate);
+
+		// update parameters from storage
+		ModuleParams::updateParams();
+		UpdateCalibration();
+
+		ConfigureFilter(_param_imu_gyro_cutoff.get());
+		ConfigureNotchFilter(_param_imu_gyro_nf_freq.get(), _param_imu_gyro_nf_bw.get());
+	}
+
 	// Apply rotation (before scaling)
 	rotate_3f(_rotation, x, y, z);
 
@@ -191,6 +226,20 @@ void PX4Gyroscope::update(hrt_abstime timestamp_sample, float x, float y, float 
 
 void PX4Gyroscope::updateFIFO(const FIFOSample &sample)
 {
+	// check for parameter updates
+	if (_parameter_update_sub.updated()) {
+		// clear update
+		parameter_update_s pupdate;
+		_parameter_update_sub.copy(&pupdate);
+
+		// update parameters from storage
+		ModuleParams::updateParams();
+		UpdateCalibration();
+
+		ConfigureFilter(_param_imu_gyro_cutoff.get());
+		ConfigureNotchFilter(_param_imu_gyro_nf_freq.get(), _param_imu_gyro_nf_bw.get());
+	}
+
 	// filtered data (control)
 	float x_filtered = _filterArrayX.apply(sample.x, sample.samples);
 	float y_filtered = _filterArrayY.apply(sample.y, sample.samples);
@@ -372,6 +421,8 @@ void PX4Gyroscope::PublishStatus()
 		status.clipping[0] = _clipping[0];
 		status.clipping[1] = _clipping[1];
 		status.clipping[2] = _clipping[2];
+		status.calibrated = _calibrated;
+		status.enabled = _enabled;
 		status.timestamp = hrt_absolute_time();
 		_sensor_status_pub.publish(status);
 
@@ -421,11 +472,14 @@ void PX4Gyroscope::UpdateVibrationMetrics(const Vector3f &delta_angle)
 
 void PX4Gyroscope::print_status()
 {
-	PX4_INFO(GYRO_BASE_DEVICE_PATH " device instance: %d", _class_device_instance);
+	char device_id_buffer[80] {};
+	device::Device::device_id_print_buffer(device_id_buffer, sizeof(device_id_buffer), _device_id);
+	PX4_INFO("device id: %d (%s)", _device_id, device_id_buffer);
+	PX4_INFO("rotation: %d", _rotation);
 	PX4_INFO("sample rate: %d Hz", _sample_rate);
 	PX4_INFO("filter cutoff: %.3f Hz", (double)_filter.get_cutoff_freq());
-	PX4_INFO("notch filter freq: %.3f Hz\tbandwidth: %.3f Hz", (double)_notch_filter.getNotchFreq(),
-		 (double)_notch_filter.getBandwidth());
+	PX4_INFO("calibrated: %d", _calibrated);
+	PX4_INFO("enabled: %d", _enabled);
 
 	PX4_INFO("calibration offset: %.5f %.5f %.5f", (double)_calibration_offset(0), (double)_calibration_offset(1),
 		 (double)_calibration_offset(2));

@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2018 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2018-2020 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,9 +33,7 @@
 
 #pragma once
 
-#include <drivers/drv_accel.h>
 #include <drivers/drv_hrt.h>
-#include <lib/cdev/CDev.hpp>
 #include <lib/conversion/rotation.h>
 #include <lib/drivers/device/integrator.h>
 #include <lib/ecl/geo/geo.h>
@@ -43,18 +41,18 @@
 #include <lib/mathlib/math/filter/LowPassFilter2pVector3f.hpp>
 #include <px4_platform_common/module_params.h>
 #include <uORB/PublicationMulti.hpp>
+#include <uORB/Subscription.hpp>
+#include <uORB/topics/parameter_update.h>
 #include <uORB/topics/sensor_accel.h>
 #include <uORB/topics/sensor_accel_fifo.h>
 #include <uORB/topics/sensor_accel_integrated.h>
 #include <uORB/topics/sensor_accel_status.h>
 
-class PX4Accelerometer : public cdev::CDev, public ModuleParams
+class PX4Accelerometer : public ModuleParams
 {
 public:
 	PX4Accelerometer(uint32_t device_id, uint8_t priority = ORB_PRIO_DEFAULT, enum Rotation rotation = ROTATION_NONE);
-	~PX4Accelerometer() override;
-
-	int	ioctl(cdev::file_t *filp, int cmd, unsigned long arg) override;
+	~PX4Accelerometer() override = default;
 
 	uint32_t get_device_id() const { return _device_id; }
 
@@ -91,12 +89,15 @@ private:
 	void ConfigureFilter(float cutoff_freq);
 	void PublishStatus();
 	void ResetIntegrator();
+	void UpdateCalibration();
 	void UpdateVibrationMetrics(const matrix::Vector3f &delta_velocity);
 
 	uORB::PublicationMulti<sensor_accel_s>            _sensor_pub;
 	uORB::PublicationMulti<sensor_accel_fifo_s>       _sensor_fifo_pub;
 	uORB::PublicationMulti<sensor_accel_integrated_s> _sensor_integrated_pub;
 	uORB::PublicationMulti<sensor_accel_status_s>     _sensor_status_pub;
+
+	uORB::Subscription _parameter_update_sub{ORB_ID(parameter_update)};
 
 	math::LowPassFilter2pVector3f _filter{1000, 100};
 
@@ -113,8 +114,6 @@ private:
 
 	matrix::Vector3f _delta_velocity_prev{0.0f, 0.0f, 0.0f};	// delta velocity from the previous IMU measurement
 	float _vibration_metric{0.0f};	// high frequency vibration level in the IMU delta velocity data (m/s)
-
-	int			_class_device_instance{-1};
 
 	uint32_t		_device_id{0};
 	const enum Rotation	_rotation;
@@ -138,6 +137,9 @@ private:
 	uint8_t			_integrator_samples{0};
 	uint8_t			_integrator_fifo_samples{0};
 	uint8_t			_integrator_clipping{0};
+
+	bool			_calibrated{false};
+	bool			_enabled{false};
 
 	DEFINE_PARAMETERS(
 		(ParamFloat<px4::params::IMU_ACCEL_CUTOFF>) _param_imu_accel_cutoff
