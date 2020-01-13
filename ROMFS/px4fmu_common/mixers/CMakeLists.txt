@@ -72,6 +72,7 @@ px4_add_romfs_files(
 	quad_w.main.mix
 	quad_x_can.main.mix
 	quad_x.main.mix
+	quad_x_cw.main.mix
 	quad_x_vtol.main.mix
 	stampede.main.mix
 	tri_y_yaw-.main.mix
