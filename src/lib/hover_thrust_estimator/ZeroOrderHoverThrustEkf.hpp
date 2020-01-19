@@ -26,10 +26,14 @@ private:
 	float computeH(float thrust);
 	float computeInnovVar(float H);
 	float computePredictedAccZ(float thrust);
-	float computeInnov(float acc_z, float predicted_acc_z);
+	float computeInnov(float acc_z, float thrust);
 	float computeKalmanGain(float H, float innov_var);
 	float computeInnovTestRatio(float innov, float innov_var);
 	bool isTestRatioPassing(float innov_test_ratio);
+
 	void updateState(float K, float innov);
 	void updateStateCovariance(float K, float H);
+	void updateMeasurementNoise(float residual, float H);
+
+	static constexpr float noise_learning_time_constant = 0.5f; // in seconds
 };
