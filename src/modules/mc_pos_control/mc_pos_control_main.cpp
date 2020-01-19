@@ -45,6 +45,7 @@
 #include <lib/perf/perf_counter.h>
 #include <lib/systemlib/mavlink_log.h>
 #include <lib/weather_vane/WeatherVane.hpp>
+#include <lib/hover_thrust_estimator/HoverThrustEstimator.hpp>
 #include <px4_platform_common/px4_config.h>
 #include <px4_platform_common/defines.h>
 #include <px4_platform_common/module.h>
@@ -182,6 +183,8 @@ private:
 	FlightTasks _flight_tasks; /**< class generating position controller setpoints depending on vehicle task */
 	PositionControl _control; /**< class for core PID position control */
 	PositionControlStates _states{}; /**< structure containing vehicle state information for position control */
+
+	HoverThrustEstimator _hover_thrust_estimator;
 
 	hrt_abstime _last_warn = 0; /**< timer when the last warn message was sent out */
 
@@ -371,6 +374,7 @@ MulticopterPositionControl::parameters_update(bool force)
 		}
 
 		_flight_tasks.handleParameterUpdate();
+		_hover_thrust_estimator.handleParameterUpdate();
 
 		// initialize vectors from params and enforce constraints
 		_param_mpc_tko_speed.set(math::min(_param_mpc_tko_speed.get(), _param_mpc_z_vel_max_up.get()));
@@ -603,6 +607,11 @@ MulticopterPositionControl::Run()
 				_control.resetIntegral();
 				// reactivate the task which will reset the setpoint to current state
 				_flight_tasks.reActivate();
+				_hover_thrust_estimator.reset();
+
+			} else if (_takeoff.getTakeoffState() >= TakeoffState::flight) {
+				_hover_thrust_estimator.setAccel(_states.acceleration(2));
+				_hover_thrust_estimator.update(_dt);
 			}
 
 			if (_takeoff.getTakeoffState() < TakeoffState::flight && !PX4_ISFINITE(setpoint.thrust[2])) {
@@ -652,6 +661,8 @@ MulticopterPositionControl::Run()
 			// This is used to properly initialize the velocity setpoint when onpening the position loop (position unlock)
 			_flight_tasks.updateVelocityControllerIO(Vector3f(local_pos_sp.vx, local_pos_sp.vy, local_pos_sp.vz),
 					Vector3f(local_pos_sp.thrust));
+
+			_hover_thrust_estimator.setThrust(local_pos_sp.thrust[2]);
 
 			vehicle_attitude_setpoint_s attitude_setpoint{};
 			attitude_setpoint.timestamp = time_stamp_now;
