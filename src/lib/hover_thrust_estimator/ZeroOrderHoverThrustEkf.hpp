@@ -11,8 +11,8 @@ public:
 
 	void predict(float _dt);
 	void fuseAccZ(float acc_z, float thrust);
-	void setProcessNoise(float process_noise) { _Q = process_noise; }
-	void setMeasurementNoise(float measurement_noise) { _R = measurement_noise; }
+	void setProcessNoiseStdDev(float process_noise) { _Q = process_noise * process_noise; }
+	void setMeasurementNoiseStdDev(float measurement_noise) { _R = measurement_noise * measurement_noise; }
 
 	float getHoverThrustEstimate() const { return _hover_thr; }
 private:
