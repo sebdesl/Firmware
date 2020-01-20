@@ -43,7 +43,7 @@ void ZeroOrderHoverThrustEkf::fuseAccZ(const float acc_z, const float thrust)
 
 inline float ZeroOrderHoverThrustEkf::computeH(const float thrust)
 {
-	return -9.81f * thrust / (_hover_thr * _hover_thr);
+	return -CONSTANTS_ONE_G * thrust / (_hover_thr * _hover_thr);
 }
 
 inline float ZeroOrderHoverThrustEkf::computeInnovVar(const float H)
@@ -53,7 +53,7 @@ inline float ZeroOrderHoverThrustEkf::computeInnovVar(const float H)
 
 float ZeroOrderHoverThrustEkf::computePredictedAccZ(const float thrust)
 {
-	return 9.81f * thrust / _hover_thr - 9.81f;
+	return CONSTANTS_ONE_G * thrust / _hover_thr - CONSTANTS_ONE_G;
 }
 
 float ZeroOrderHoverThrustEkf::computeInnov(const float acc_z, const float thrust)

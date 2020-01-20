@@ -1,6 +1,7 @@
 #pragma once
 
 #include <matrix/matrix/math.hpp>
+#include <ecl/geo/geo.h>
 
 class ZeroOrderHoverThrustEkf
 {
